@@ -1,0 +1,12 @@
+[package]
+name = "pwrusb"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+rusb = "0.9.4"
+tokio = { version = "1.47.1", features = ["rt", "rt-multi-thread", "macros", "time", "net", "io-util"] }
+anyhow = "1.0.99"
+serde = { version = "1.0.219", features = ["derive"] }
+once_cell = "1.21.3"
+axum = "0.8.4"
