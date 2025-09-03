@@ -37,6 +37,12 @@ pub static GLOBAL_STATE: Lazy<RwLock<DaemonState>> = Lazy::new(|| {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     println!("Starting pwrusb daemon...");
+
+    if !is_admin() {
+        println!("[ERROR] Admin access required to run pwrusb daemon!");
+        return Ok(());
+    }
+
     {
         tokio::spawn(async {
             loop {
@@ -197,4 +203,10 @@ fn sniff<T: UsbContext>(device: &Device<T>) -> rusb::Result<()> {
 async fn list_info() -> (StatusCode, Json<DaemonState>) {
     let state = GLOBAL_STATE.read().await;
     (StatusCode::OK, Json(state.clone()))
+}
+
+#[cfg(unix)]
+fn is_admin() -> bool {
+    use nix::unistd::Uid;
+    Uid::effective().is_root()
 }
