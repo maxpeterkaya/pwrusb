@@ -3,6 +3,7 @@ use once_cell::sync::Lazy;
 use rusb::{Context, Device, DeviceDescriptor, Direction, TransferType, UsbContext};
 use serde::Serialize;
 use std::convert::Into;
+use std::io::{self, Write};
 use std::string::ToString;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -51,32 +52,48 @@ async fn main() -> anyhow::Result<()> {
     let context = Context::new().expect("Couldn't create context");
     let devices = context.devices().expect("Failed to list devices");
 
-    for device in devices.iter() {
-        let desc = device
-            .device_descriptor()
-            .expect("Failed to read device descriptor");
-        let name = get_device_name(&device, &desc).unwrap_or("<unknown>".into());
+    let mut found_device = false;
+    let mut count = 0;
 
-        if name.contains("CPS") {
-            {
-                let mut state = GLOBAL_STATE.write().await;
-                state.status = "running".into();
-                state.device_name = name.clone().trim_end_matches('\0').into();
-                state.vendor_id = desc.vendor_id();
-                state.product_id = desc.product_id();
+    while !found_device {
+        for device in devices.iter() {
+            let desc = device
+                .device_descriptor()
+                .expect("Failed to read device descriptor");
+            let name = get_device_name(&device, &desc).unwrap_or("<unknown>".into());
+
+            if name.contains("CPS") {
+                {
+                    let mut state = GLOBAL_STATE.write().await;
+                    state.status = "running".into();
+                    state.device_name = name.clone().trim_end_matches('\0').into();
+                    state.vendor_id = desc.vendor_id();
+                    state.product_id = desc.product_id();
+                }
+                found_device = true;
+                println!("Found UPS device: {}", name);
+
+                println!("Collecting UPS data...");
+                let device_clone = device.clone();
+                tokio::task::spawn_blocking(move || {
+                    sniff(&device_clone).expect("USB sniff failed");
+                });
             }
-            println!("Found UPS device: {}", name);
-            // println!("{}: {} {}", name, desc.vendor_id(), desc.product_id());
+        }
 
-            println!("Collecting UPS data...");
-            let device_clone = device.clone();
-            tokio::task::spawn_blocking(move || {
-                sniff(&device_clone).expect("USB sniff failed");
-            });
+        if !found_device {
+            count += 1;
+            print!("\rFailed to find UPS on try #{}! Trying again in 2 seconds...", count);
+            io::stdout().flush()?;
+
+            let mut state = GLOBAL_STATE.write().await;
+            state.status = "not_found".into();
+
+            tokio::time::sleep(Duration::from_secs(2)).await;
         }
     }
 
-    println!("Starting pwrusb HTTP server...");
+    println!("Starting pwrusb HTTP server at http://0.0.0.0:37473...");
     let app = Router::new().route("/", get(list_info));
     let listener = tokio::net::TcpListener::bind("0.0.0.0:37473").await?;
     axum::serve(listener, app).await?;
@@ -113,12 +130,6 @@ fn sniff<T: UsbContext>(device: &Device<T>) -> rusb::Result<()> {
     for interface in config.interfaces() {
         for iface_desc in interface.descriptors() {
             for endpoint in iface_desc.endpoint_descriptors() {
-                // println!(
-                //     "Found endpoint 0x{:02x} dir={:?} type={:?}",
-                //     endpoint.address(),
-                //     endpoint.direction(),
-                //     endpoint.transfer_type()
-                // );
                 if endpoint.direction() == Direction::In {
                     in_endpoint = Some((endpoint.address(), endpoint.transfer_type()));
                 }
@@ -159,19 +170,17 @@ fn sniff<T: UsbContext>(device: &Device<T>) -> rusb::Result<()> {
                 if a[0] == 25 {
                     let mut state = GLOBAL_STATE.blocking_write();
                     state.output_wattage = a[1] + (a[2] * 256);
-                    // println!("Output Wattage: \t{}W", a[1] + (a[2] * 256))
                 }
                 if a[0] == 29 {
                     let mut state = GLOBAL_STATE.blocking_write();
                     state.output_va = a[1] + (a[2] * 256);
-                    // println!("Output VA: \t\t{}", a[1] + (a[2] * 256))
                 }
 
                 // This is a small documentation of values received and their descriptions
                 // 8; first number battery cap
                 // 11 unknown
                 // 25 is the output W, ex: [25, 100, 0], the last number, 0, is an indicator of how many times the output in this instance should be multiplied (maximum int value of 256 or 255 (unsure, need to test more))
-                // 29 is the output VA
+                // 29 is the output VA, same as output W
             }
             Ok(_) => {}
             Err(rusb::Error::Timeout) => {}
