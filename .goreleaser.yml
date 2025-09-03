@@ -1,0 +1,45 @@
+project_name: pwrusb
+version: 2
+
+builds:
+  - builder: rust
+    binary: pwrusb
+    # List of targets to be built, in Rust's format.
+    # Default: [ "x86_64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin" ]
+    targets:
+      - x86_64-unknown-linux-gnu
+    command: build
+    flags:
+      - --release
+
+source:
+  enabled: true
+
+sboms:
+  - artifacts: archive
+  - id: source
+    artifacts: source
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^test:'
+      - '^chore'
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+
+  groups:
+    - title: 'New Features'
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: 'Bug fixes'
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 10
+    - title: Other work
+      order: 999
